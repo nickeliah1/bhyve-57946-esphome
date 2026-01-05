@@ -1,0 +1,351 @@
+# ============================================================
+# Orbit B-Hyve Sprinkler Controller - ESPHome Configuration
+# ============================================================
+# Converts Orbit B-Hyve (Model 57946) from cloud to local control
+# with Home Assistant integration.
+#
+# Hardware: ESP32-D0WDQ6, 4MB Adesto AT25SF321 flash
+# Features: 6 zones, segment LCD (CS1622), rain/flow sensors
+#
+# Repository: https://github.com/nickeliah1/bhyve-57946-esphome
+# License: GPL-3.0
+# ============================================================
+
+esphome:
+  name: "orbit-bhyve"
+  friendly_name: "Orbit B-Hyve Sprinkler"
+  includes:
+    - cs1622.h
+  platformio_options:
+    board_build.flash_mode: dio
+    board_build.f_flash: 40000000L
+
+# ============================================================
+# ESP32 Configuration
+# ============================================================
+# CRITICAL: Uses legacy flash driver for Adesto AT25SF321 compatibility
+# The standard ESP-IDF driver fails to detect this flash chip
+
+esp32:
+  board: esp32dev
+  flash_size: 4MB
+  framework:
+    type: esp-idf
+    version: 4.4.8
+    platform_version: 5.4.0
+    advanced:
+      ignore_efuse_custom_mac: true
+      ignore_efuse_mac_crc: true
+    sdkconfig_options:
+      CONFIG_ESPTOOLPY_FLASHMODE_DIO: y
+      CONFIG_ESPTOOLPY_FLASHSIZE_4MB: y
+      # Use legacy flash implementation (simpler, less strict probing)
+      CONFIG_SPI_FLASH_USE_LEGACY_IMPL: y
+      CONFIG_SPI_FLASH_DANGEROUS_WRITE_ALLOWED: y
+      CONFIG_SPI_FLASH_SUPPORT_ATMEL_CHIP: y
+      CONFIG_SPI_FLASH_SUPPORT_ISSI_CHIP: y
+      CONFIG_SPI_FLASH_SUPPORT_GD_CHIP: y
+      CONFIG_SPI_FLASH_SUPPORT_WINBOND_CHIP: y
+      CONFIG_SPI_FLASH_SUPPORT_MXIC_CHIP: y
+
+# ============================================================
+# Core Components
+# ============================================================
+
+logger:
+  baud_rate: 115200
+  level: DEBUG
+
+# Home Assistant API (encrypted)
+api:
+  encryption:
+    key: !secret api_key
+
+# Over-The-Air updates (no more UART after initial flash!)
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+# WiFi configuration
+wifi:
+  networks:
+    - ssid: !secret wifi_ssid
+      password: !secret wifi_password
+  on_connect:
+    - lambda: |-
+        if (lcd_display) {
+          lcd_display->show_wifi_connected();
+        }
+  on_disconnect:
+    - lambda: |-
+        if (lcd_display) {
+          lcd_display->show_wifi_disconnected();
+        }
+
+# ============================================================
+# Hardware: LCD Controller (CS1622)
+# ============================================================
+# The segment LCD uses a CS1622 controller (similar to HT1621)
+# GPIO32 is shared between LCD DATA and shift register DATA
+# Pins: CS=GPIO21, WR=GPIO0, DATA=GPIO32
+
+custom_component:
+  - lambda: |-
+      auto lcd = new CS1622Display();
+      lcd_display = lcd;
+      return {lcd};
+
+# ============================================================
+# Hardware: Valve Control (SN74HC595 Shift Register)
+# ============================================================
+# 6 irrigation zones controlled via shift register
+# Located on the power board, connected via 10-pin ribbon
+#
+# Pin mapping (traced with multimeter):
+#   595 Pin 14 (SER/DATA)  → GPIO32 (shared with LCD)
+#   595 Pin 11 (SRCLK)     → GPIO25
+#   595 Pin 12 (RCLK)      → GPIO33
+#   595 Pin 13 (OE)        → GPIO26 (active low)
+
+sn74hc595:
+  - id: valve_shift_register
+    data_pin: GPIO32
+    clock_pin: GPIO25
+    latch_pin: GPIO33
+    oe_pin: GPIO26
+    sr_count: 1
+
+# ============================================================
+# Irrigation Zone Switches (Internal - controlled by sprinkler)
+# ============================================================
+# These are the raw GPIO switches - sprinkler controller manages them
+
+switch:
+  - platform: gpio
+    id: valve1
+    internal: true
+    pin:
+      sn74hc595: valve_shift_register
+      number: 7  # Q7 output → Zone 1
+      inverted: false
+  - platform: gpio
+    id: valve2
+    internal: true
+    pin:
+      sn74hc595: valve_shift_register
+      number: 6  # Q6 output → Zone 2
+      inverted: false
+  - platform: gpio
+    id: valve3
+    internal: true
+    pin:
+      sn74hc595: valve_shift_register
+      number: 5  # Q5 output → Zone 3
+      inverted: false
+  - platform: gpio
+    id: valve4
+    internal: true
+    pin:
+      sn74hc595: valve_shift_register
+      number: 4  # Q4 output → Zone 4
+      inverted: false
+  - platform: gpio
+    id: valve5
+    internal: true
+    pin:
+      sn74hc595: valve_shift_register
+      number: 3  # Q3 output → Zone 5
+      inverted: false
+  - platform: gpio
+    id: valve6
+    internal: true
+    pin:
+      sn74hc595: valve_shift_register
+      number: 2  # Q2 output → Zone 6
+      inverted: false
+
+# ============================================================
+# Sprinkler Controller
+# ============================================================
+# Professional irrigation control with timers, auto-advance, etc.
+
+sprinkler:
+  - id: lawn_sprinkler
+    main_switch: "Sprinkler Master"
+    auto_advance_switch: "Auto Advance"
+    valve_overlap: 0s
+    multiplier_number: "Run Time Multiplier"
+    valves:
+      - valve_switch: "Zone 1"
+        enable_switch: "Enable Zone 1"
+        run_duration_number: "Zone 1 Duration"
+        valve_switch_id: valve1
+      - valve_switch: "Zone 2"
+        enable_switch: "Enable Zone 2"
+        run_duration_number: "Zone 2 Duration"
+        valve_switch_id: valve2
+      - valve_switch: "Zone 3"
+        enable_switch: "Enable Zone 3"
+        run_duration_number: "Zone 3 Duration"
+        valve_switch_id: valve3
+      - valve_switch: "Zone 4"
+        enable_switch: "Enable Zone 4"
+        run_duration_number: "Zone 4 Duration"
+        valve_switch_id: valve4
+      - valve_switch: "Zone 5"
+        enable_switch: "Enable Zone 5"
+        run_duration_number: "Zone 5 Duration"
+        valve_switch_id: valve5
+      - valve_switch: "Zone 6"
+        enable_switch: "Enable Zone 6"
+        run_duration_number: "Zone 6 Duration"
+        valve_switch_id: valve6
+
+# ============================================================
+# LCD Control Buttons (Debug - hidden)
+# ============================================================
+
+button:
+  - platform: template
+    name: "LCD Test Pattern"
+    internal: true
+    on_press:
+      then:
+        - lambda: 'if (lcd_display) lcd_display->test_pattern();'
+  - platform: template
+    name: "LCD Clear"
+    internal: true
+    on_press:
+      then:
+        - lambda: 'if (lcd_display) lcd_display->clear();'
+  - platform: template
+    name: "LCD Next Segment"
+    internal: true
+    on_press:
+      then:
+        - lambda: 'if (lcd_display) lcd_display->next_segment();'
+  - platform: template
+    name: "LCD Prev Segment"
+    internal: true
+    on_press:
+      then:
+        - lambda: 'if (lcd_display) lcd_display->prev_segment();'
+
+# ============================================================
+# Physical Buttons
+# ============================================================
+# The B-Hyve has several buttons on the front panel
+# Currently using one for LCD segment discovery
+# Others can be mapped for manual zone control
+
+binary_sensor:
+  - platform: gpio
+    pin:
+      number: GPIO5
+      inverted: true
+      mode: INPUT_PULLUP
+    name: "Front Button"
+    on_press:
+      then:
+        - lambda: |-
+            // Toggle: if running, stop. If stopped, start.
+            if (id(lawn_sprinkler).active_valve().has_value()) {
+              id(lawn_sprinkler).shutdown();
+            } else {
+              id(lawn_sprinkler).start_full_cycle();
+            }
+
+# ============================================================
+# Sensors & Controls
+# ============================================================
+
+interval:
+  # Update LCD every second when watering
+  - interval: 1s
+    then:
+      - lambda: |-
+          static bool was_running = false;
+          if (lcd_display) {
+            auto remaining = id(lawn_sprinkler).time_remaining_active_valve();
+            bool is_running = remaining.has_value() && remaining.value() > 0;
+            
+            if (is_running) {
+              lcd_display->display_time(remaining.value());
+              auto active = id(lawn_sprinkler).active_valve();
+              if (active.has_value()) {
+                lcd_display->show_zone_number(active.value() + 1);
+              }
+              was_running = true;
+            } else if (was_running) {
+              lcd_display->clear_time();
+              lcd_display->clear_zone_number();
+              was_running = false;
+            }
+          }
+
+text_sensor:
+  # Completion time - only calculates when a zone is active
+  - platform: template
+    name: "Completion Time"
+    id: completion_time
+    lambda: |-
+      // Quick check - if no active valve, return idle immediately
+      if (!id(lawn_sprinkler).active_valve().has_value()) {
+        return std::string("--:--:--");
+      }
+      auto remaining = id(lawn_sprinkler).time_remaining_active_valve();
+      if (remaining.has_value() && remaining.value() > 0) {
+        auto now = id(homeassistant_time).now();
+        if (now.is_valid()) {
+          auto finish = now.timestamp + remaining.value();
+          auto finish_time = ESPTime::from_epoch_local(finish);
+          char buf[16];
+          snprintf(buf, sizeof(buf), "%02d:%02d:%02d", finish_time.hour, finish_time.minute, finish_time.second);
+          return std::string(buf);
+        }
+      }
+      return std::string("--:--:--");
+    update_interval: 1s
+    filters:
+      - lambda: |-
+          static std::string last_value = "";
+          if (x == last_value) return {};
+          last_value = x;
+          return x;
+
+time:
+  - platform: homeassistant
+    id: homeassistant_time
+
+sensor:
+  # LCD segment index for mapping discovery
+  - platform: template
+    name: "LCD Segment Index"
+    id: lcd_segment_index
+    internal: true
+    lambda: |-
+      if (lcd_display) {
+        return lcd_display->get_current_index();
+      }
+      return 0;
+    update_interval: 5s
+    filters:
+      - delta: 1
+
+# LCD segment selector (for debugging)
+number:
+  - platform: template
+    name: "LCD Segment Selector"
+    id: lcd_segment_selector
+    internal: true
+    min_value: 0
+    max_value: 159
+    step: 1
+    optimistic: true
+    set_action:
+      then:
+        - lambda: |-
+            if (lcd_display) {
+              lcd_display->scan_segment((uint16_t)x);
+              lcd_display->current_scan_index = (uint16_t)x;
+            }
