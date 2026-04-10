@@ -209,6 +209,28 @@ advanced:
   ignore_efuse_mac_crc: true
 ```
 
+## Development Troubleshooting
+
+### `ModuleNotFoundError: No module named 'pkg_resources'`
+Python 3.12+ removed `pkg_resources`, which older platformio/espressif32 build scripts depend on.
+
+**Fix:** Create the venv with Python 3.11:
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### `OSError: [Errno 86] Bad CPU type in executable: .../tool-cmake/bin/cmake`
+Platformio's bundled cmake binary for `espressif32@5.4.0` is x86-only and won't run natively on Apple Silicon.
+
+**Fix:** Install Rosetta 2:
+```bash
+softwareupdate --install-rosetta
+```
+
+---
+
 ## Project Structure
 
 ```

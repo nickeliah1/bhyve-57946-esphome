@@ -283,7 +283,40 @@ interval:
             }
           }
 
+globals:
+  - id: last_run_time_stored
+    type: std::string
+    restore_value: true
+    initial_value: '"Never"'
+
 text_sensor:
+  # Last run time - self-contained, persisted across reboots via global
+  - platform: template
+    name: "Last Run Time"
+    id: last_run_time
+    lambda: |-
+      static bool was_running = false;
+      bool is_running = id(lawn_sprinkler).active_valve().has_value();
+      if (is_running) {
+        was_running = true;
+      } else if (was_running) {
+        was_running = false;
+        auto now = id(homeassistant_time).now();
+        if (now.is_valid()) {
+          char buf[32];
+          now.strftime(buf, sizeof(buf), "%a %b %e %I:%M%p");
+          id(last_run_time_stored) = std::string(buf);
+        }
+      }
+      return id(last_run_time_stored);
+    update_interval: 1s
+    filters:
+      - lambda: |-
+          static std::string last_value = "";
+          if (x == last_value) return {};
+          last_value = x;
+          return x;
+
   # Completion time - only calculates when a zone is active
   - platform: template
     name: "Completion Time"
