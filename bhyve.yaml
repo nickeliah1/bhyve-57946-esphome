@@ -56,10 +56,11 @@ logger:
   baud_rate: 115200
   level: DEBUG
 
-# Home Assistant API (encrypted)
-api:
-  encryption:
-    key: !secret api_key
+# MQTT — enables WaterBuddy to talk directly to the device
+mqtt:
+  broker: !secret mqtt_broker
+  username: !secret mqtt_username
+  password: !secret mqtt_password
 
 # Over-The-Air updates (no more UART after initial flash!)
 ota:
@@ -347,7 +348,7 @@ text_sensor:
           return x;
 
 time:
-  - platform: homeassistant
+  - platform: sntp
     id: homeassistant_time
 
 sensor:
