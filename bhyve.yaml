@@ -285,66 +285,37 @@ interval:
           }
 
 globals:
-  - id: last_run_time_stored
+  - id: completion_time_stored
     type: std::string
     restore_value: true
     initial_value: '"Never"'
 
 text_sensor:
-  # Last run time - self-contained, persisted across reboots via global
-  - platform: template
-    name: "Last Run Time"
-    id: last_run_time
-    lambda: |-
-      static bool was_running = false;
-      bool is_running = id(lawn_sprinkler).active_valve().has_value();
-      if (is_running) {
-        was_running = true;
-      } else if (was_running) {
-        was_running = false;
-        auto now = id(homeassistant_time).now();
-        if (now.is_valid()) {
-          char buf[32];
-          now.strftime(buf, sizeof(buf), "%a %b %e %I:%M%p");
-          id(last_run_time_stored) = std::string(buf);
-        }
-      }
-      return id(last_run_time_stored);
-    update_interval: 1s
-    filters:
-      - lambda: |-
-          static std::string last_value = "";
-          if (x == last_value) return {};
-          last_value = x;
-          return x;
-
-  # Completion time - only calculates when a zone is active
+  # Completion time - shows projected finish time while running, retains value after cycle ends.
+  # Persisted across reboots. Shows "Never" until first cycle completes.
   - platform: template
     name: "Completion Time"
     id: completion_time
     lambda: |-
-      // Quick check - if no active valve, return idle immediately
-      if (!id(lawn_sprinkler).active_valve().has_value()) {
-        return std::string("--:--:--");
-      }
-      auto remaining = id(lawn_sprinkler).time_remaining_active_valve();
-      if (remaining.has_value() && remaining.value() > 0) {
-        auto now = id(homeassistant_time).now();
-        if (now.is_valid()) {
-          auto finish = now.timestamp + remaining.value();
-          auto finish_time = ESPTime::from_epoch_local(finish);
-          char buf[16];
-          snprintf(buf, sizeof(buf), "%02d:%02d:%02d", finish_time.hour, finish_time.minute, finish_time.second);
-          return std::string(buf);
+      if (id(lawn_sprinkler).active_valve().has_value()) {
+        auto remaining = id(lawn_sprinkler).time_remaining_active_valve();
+        if (remaining.has_value() && remaining.value() > 0) {
+          auto now = id(homeassistant_time).now();
+          if (now.is_valid()) {
+            auto finish = ESPTime::from_epoch_local(now.timestamp + remaining.value());
+            char buf[32];
+            finish.strftime(buf, sizeof(buf), "%a %b %e %I:%M%p");
+            id(completion_time_stored) = std::string(buf);
+          }
         }
       }
-      return std::string("--:--:--");
+      return id(completion_time_stored);
     update_interval: 1s
     filters:
       - lambda: |-
-          static std::string last_value = "";
-          if (x == last_value) return {};
-          last_value = x;
+          static std::string last_completion_val = "";
+          if (x == last_completion_val) return {};
+          last_completion_val = x;
           return x;
 
 time:
